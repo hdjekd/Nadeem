@@ -295,8 +295,7 @@ def handle_message(update, context):
 🔹 `/setpass <كلمة المرور>` - تغيير كلمة مرور التطبيق
 🔹 `/clear` - مسح جميع الطلبات
 
-💡 *أمثلة:* 
-/setlogo 𓆩♛✦𓆪
+💡 *أمثلة:* /setlogo 𓆩♛✦𓆪
 /setwelcome 🔐 طلب دخول جديد
 /setpass MyNewPass123
 """
@@ -431,11 +430,9 @@ def handle_message(update, context):
             settings_text = f"""
 ⚙️ *الإعدادات الحالية*
 
-🏷️ *الشعار:* 
-{logo}
+🏷️ *الشعار:* {logo}
 
-📝 *رسالة الترحيب:* 
-{welcome}
+📝 *رسالة الترحيب:* {welcome}
 
 🔑 *كلمة المرور:* {'●' * 8}
 """
@@ -500,19 +497,20 @@ def request_access():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ✅ تم تحديث الدالة لتعمل من قاعدة البيانات مباشرة لحل مشكلة التعليق
 @app.route('/check_status/<request_id>', methods=['GET'])
 def check_status(request_id):
     try:
-        if request_id in pending_requests:
-            status = pending_requests[request_id]["status"]
-            if status != "pending":
-                del pending_requests[request_id]
-            return jsonify({"status": status})
-        
+        # البحث مباشرة في قاعدة البيانات لضمان عدم تأثر الحالة بإعادة تشغيل السيرفر
         c.execute("SELECT status FROM approvals WHERE request_id = ?", (request_id,))
         row = c.fetchone()
+        
         if row:
             return jsonify({"status": row[0]})
+        
+        # إذا لم يوجد في القاعدة، نتحقق من الذاكرة كخيار احتياطي
+        if request_id in pending_requests:
+            return jsonify({"status": pending_requests[request_id]["status"]})
         
         return jsonify({"status": "pending"})
     
