@@ -19,7 +19,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ===================== قاعدة البيانات =====================
-# دالة لفتح الاتصال في كل مرة لضمان عدم حدوث تعليق (Database Lock)
+# دالة لإنشاء اتصال جديد في كل مرة لتجنب مشاكل التداخل (Database Lock)
 def get_db_connection():
     conn = sqlite3.connect('tomb_bot.db', check_same_thread=False)
     return conn
@@ -36,17 +36,14 @@ def init_db():
                   device_name TEXT,
                   device_info TEXT,
                   ip_address TEXT)''')
-
     c.execute('''CREATE TABLE IF NOT EXISTS settings
                  (key TEXT PRIMARY KEY, 
                   value TEXT)''')
-
     c.execute('''CREATE TABLE IF NOT EXISTS passwords
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   password_hash TEXT,
                   updated_at INTEGER,
                   updated_by TEXT)''')
-
     c.execute('''CREATE TABLE IF NOT EXISTS access_logs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   username TEXT,
@@ -126,7 +123,6 @@ def get_access_stats():
     pending = c.execute("SELECT COUNT(*) FROM approvals WHERE status='pending'").fetchone()[0]
     approved = c.execute("SELECT COUNT(*) FROM approvals WHERE status='approved'").fetchone()[0]
     denied = c.execute("SELECT COUNT(*) FROM approvals WHERE status='denied'").fetchone()[0]
-    
     recent = c.execute("""SELECT username, device_name, status, timestamp 
                           FROM approvals ORDER BY timestamp DESC LIMIT 10""").fetchall()
     conn.close()
@@ -184,7 +180,6 @@ def send_approval_request(request_id, app_name="Tomb", username="Unknown",
             reply_markup=reply_markup
         )
     except Exception as e:
-        print(f"Error sending message: {e}")
         bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=message_text.replace('*', '').replace('`', ''),
@@ -211,7 +206,6 @@ def send_approval_request(request_id, app_name="Tomb", username="Unknown",
 def handle_callback(update, context):
     query = update.callback_query
     query.answer()
-    
     data = query.data
     conn = get_db_connection()
     c = conn.cursor()
@@ -281,8 +275,6 @@ def handle_callback(update, context):
                 text=info_text,
                 parse_mode=telegram.ParseMode.MARKDOWN
             )
-        else:
-            bot.send_message(chat_id=ADMIN_CHAT_ID, text="❌ لم يتم العثور على الطلب")
         conn.close()
         return
     
@@ -444,50 +436,31 @@ def handle_message(update, context):
                         text=f"✅ تم تغيير كلمة مرور التطبيق بنجاح!\n\n🔑 كلمة المرور الجديدة: `{new_password}`",
                         parse_mode=telegram.ParseMode.MARKDOWN
                     )
-                else:
-                    bot.send_message(chat_id=chat_id, text="❌ فشل في تغيير كلمة المرور")
             else:
-                bot.send_message(
-                    chat_id=chat_id,
-                    text="❌ كلمة المرور يجب أن تكون 4 أحرف على الأقل\nمثال: /setpass MyNewPass123"
-                )
+                bot.send_message(chat_id=chat_id, text="❌ كلمة المرور قصيرة جداً")
         
         elif text.startswith('/setlogo'):
             new_logo = text.replace('/setlogo', '').strip()
             if new_logo:
                 set_setting("custom_logo", new_logo)
                 bot.send_message(chat_id=chat_id, text=f"✅ تم تغيير الشعار إلى:\n\n{new_logo}")
-            else:
-                bot.send_message(chat_id=chat_id, text="❌ الرجاء إدخال الشعار الجديد\nمثال: /setlogo 𓆩♛✦𓆪")
         
         elif text.startswith('/setwelcome'):
             new_welcome = text.replace('/setwelcome', '').strip()
             if new_welcome:
                 set_setting("welcome_message", new_welcome)
-                bot.send_message(chat_id=chat_id, text=f"✅ تم تغيير رسالة الترحيب إلى:\n\n{new_welcome}")
-            else:
-                bot.send_message(chat_id=chat_id, text="❌ الرجاء إدخال الرسالة الجديدة\nمثال: /setwelcome 🔐 طلب جديد")
+                bot.send_message(chat_id=chat_id, text=f"✅ تم تغيير رسالة الترحيب")
         
         elif text == '/getsettings':
             logo = get_setting("custom_logo", CUSTOM_LOGO)
             welcome = get_setting("welcome_message", WELCOME_MESSAGE)
-            
-            settings_text = f"""
-⚙️ *الإعدادات الحالية*
-
-🏷️ *الشعار:* {logo}
-
-📝 *رسالة الترحيب:* {welcome}
-
-🔑 *كلمة المرور:* {'●' * 8}
-"""
+            settings_text = f"⚙️ *الإعدادات*\n\n🏷️ الشعار: {logo}\n📝 الترحيب: {welcome}"
             bot.send_message(chat_id=chat_id, text=settings_text, parse_mode=telegram.ParseMode.MARKDOWN)
 
 def run_bot():
     try:
         updater = Updater(BOT_TOKEN, use_context=True)
         dp = updater.dispatcher
-        
         dp.add_handler(CallbackQueryHandler(handle_callback))
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
         dp.add_handler(CommandHandler("start", handle_message))
@@ -503,7 +476,8 @@ def run_bot():
         dp.add_handler(CommandHandler("setwelcome", handle_message))
         dp.add_handler(CommandHandler("getsettings", handle_message))
         
-        updater.start_polling()
+        # حل مشكلة الـ Conflict بمسح التحديثات القديمة عند البدء
+        updater.start_polling(drop_pending_updates=True)
         updater.idle()
     except Exception as e:
         print(f"Bot error: {e}")
@@ -518,27 +492,15 @@ def request_access():
     try:
         data = request.json
         request_id = data.get('request_id')
-        app_name = data.get('app_name', 'Tomb')
-        username = data.get('username', 'Unknown')
-        device_name = data.get('device_name', 'Unknown')
-        device_info = data.get('device_info', 'Unknown')
-        
-        if not request_id:
-            return jsonify({"error": "missing request_id"}), 400
-        
-        ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
-        
         send_approval_request(
             request_id=request_id,
-            app_name=app_name,
-            username=username,
-            device_name=device_name,
-            device_info=device_info,
-            ip_address=ip_address
+            app_name=data.get('app_name', 'Tomb'),
+            username=data.get('username', 'Unknown'),
+            device_name=data.get('device_name', 'Unknown'),
+            device_info=data.get('device_info', 'Unknown'),
+            ip_address=request.headers.get('X-Forwarded-For', request.remote_addr)
         )
-        
         return jsonify({"status": "sent", "request_id": request_id})
-    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -550,101 +512,59 @@ def check_status(request_id):
         c.execute("SELECT status FROM approvals WHERE request_id = ?", (request_id,))
         row = c.fetchone()
         conn.close()
-        
         if row:
             return jsonify({"status": row[0]})
-        
-        if request_id in pending_requests:
-            return jsonify({"status": pending_requests[request_id]["status"]})
-        
         return jsonify({"status": "pending"})
-    
     except Exception as e:
         return jsonify({"status": "pending", "error": str(e)}), 500
 
 @app.route('/verify_password', methods=['POST'])
 def verify_password():
-    """التحقق من كلمة المرور"""
     try:
         data = request.json
-        password = data.get('password', '')
-        
-        if check_password(password):
+        if check_password(data.get('password', '')):
             return jsonify({"valid": True})
         return jsonify({"valid": False})
-    
     except Exception as e:
         return jsonify({"valid": False, "error": str(e)}), 500
 
 @app.route('/change_password', methods=['POST'])
 def change_password():
-    """تغيير كلمة المرور"""
     try:
         data = request.json
-        old_password = data.get('old_password', '')
-        new_password = data.get('new_password', '')
-        
-        if not check_password(old_password):
-            return jsonify({"success": False, "error": "كلمة المرور الحالية غير صحيحة"})
-        
-        if len(new_password) < 4:
-            return jsonify({"success": False, "error": "كلمة المرور الجديدة قصيرة جداً"})
-        
-        if update_password(new_password, "app"):
+        if not check_password(data.get('old_password', '')):
+            return jsonify({"success": False, "error": "كلمة المرور غير صحيحة"})
+        if update_password(data.get('new_password', ''), "app"):
             return jsonify({"success": True})
-        
-        return jsonify({"success": False, "error": "فشل في تحديث كلمة المرور"})
-    
+        return jsonify({"success": False})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
-    """تحديث إعدادات البوت من التطبيق"""
     try:
         data = request.json
-        password = data.get('password', '')
-        
-        if not check_password(password):
+        if not check_password(data.get('password', '')):
             return jsonify({"success": False, "error": "كلمة المرور غير صحيحة"})
-        
-        if 'logo' in data:
-            set_setting("custom_logo", data['logo'])
-        if 'welcome_message' in data:
-            set_setting("welcome_message", data['welcome_message'])
-        
+        if 'logo' in data: set_setting("custom_logo", data['logo'])
+        if 'welcome_message' in data: set_setting("welcome_message", data['welcome_message'])
         return jsonify({"success": True})
-    
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route('/get_settings', methods=['GET'])
 def get_settings():
-    try:
-        return jsonify({
-            "logo": get_setting("custom_logo", CUSTOM_LOGO),
-            "welcome_message": get_setting("welcome_message", WELCOME_MESSAGE)
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"logo": get_setting("custom_logo", CUSTOM_LOGO), "welcome_message": get_setting("welcome_message", WELCOME_MESSAGE)})
 
 @app.route('/get_stats', methods=['GET'])
 def get_stats():
-    try:
-        stats = get_access_stats()
-        return jsonify(stats)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify(get_access_stats())
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({
-        "status": "ok",
-        "bot": "running",
-        "version": "3.0",
-        "timestamp": int(time.time())
-    })
+    return jsonify({"status": "ok", "bot": "running", "timestamp": int(time.time())})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    # الحل النهائي لمشكلة التكرار والـ Conflict في الاستضافات
+    app.run(host='0.0.0.0', port=port, use_reloader=False)
