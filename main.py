@@ -13,16 +13,15 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, MessageHandler, Filters
 
 # ===================== الإعدادات =====================
-BOT_TOKEN = '8506676223:AAHcbApXCWpLjR7aQrdbK8LlWsr54SE1qa4'  # ضع توكن البوت هنا
-ADMIN_CHAT_ID = '8311254462'  # ضع ايديك هنا
+BOT_TOKEN = '8506676223:AAHcbApXCWpLjR7aQrdbK8LlWsr54SE1qa4'
+ADMIN_CHAT_ID = '8311254462'
 app = Flask(__name__)
-CORS(app)  # للسماح للتطبيق بالاتصال
+CORS(app)
 
 # ===================== قاعدة البيانات =====================
 conn = sqlite3.connect('tomb_bot.db', check_same_thread=False)
 c = conn.cursor()
 
-# جدول الطلبات
 c.execute('''CREATE TABLE IF NOT EXISTS approvals
              (request_id TEXT PRIMARY KEY, 
               status TEXT, 
@@ -32,19 +31,16 @@ c.execute('''CREATE TABLE IF NOT EXISTS approvals
               device_info TEXT,
               ip_address TEXT)''')
 
-# جدول الإعدادات
 c.execute('''CREATE TABLE IF NOT EXISTS settings
              (key TEXT PRIMARY KEY, 
               value TEXT)''')
 
-# جدول كلمات المرور
 c.execute('''CREATE TABLE IF NOT EXISTS passwords
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
               password_hash TEXT,
               updated_at INTEGER,
               updated_by TEXT)''')
 
-# جدول سجل الدخول
 c.execute('''CREATE TABLE IF NOT EXISTS access_logs
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
               username TEXT,
@@ -68,26 +64,24 @@ def set_setting(key, value):
     conn.commit()
 
 def get_app_password():
-    """الحصول على كلمة المرور الحالية للتطبيق"""
     c.execute("SELECT password_hash FROM passwords ORDER BY updated_at DESC LIMIT 1")
     row = c.fetchone()
     if row:
         return row[0]
-    # كلمة مرور افتراضية
     default_hash = hashlib.sha256("123456".encode()).hexdigest()
     c.execute("INSERT INTO passwords (password_hash, updated_at, updated_by) VALUES (?, ?, ?)", 
               (default_hash, int(time.time()), "system"))
     conn.commit()
     return default_hash
 
-def verify_password(password):
+# ✅ تم تغيير اسم الدالة من verify_password إلى check_password لتجنب التضارب
+def check_password(password):
     """التحقق من كلمة المرور"""
     current_hash = get_app_password()
     input_hash = hashlib.sha256(password.encode()).hexdigest()
     return input_hash == current_hash
 
 def update_password(new_password, updated_by="bot"):
-    """تحديث كلمة المرور"""
     new_hash = hashlib.sha256(new_password.encode()).hexdigest()
     c.execute("INSERT INTO passwords (password_hash, updated_at, updated_by) VALUES (?, ?, ?)", 
               (new_hash, int(time.time()), updated_by))
@@ -95,7 +89,6 @@ def update_password(new_password, updated_by="bot"):
     return True
 
 def log_access(username, device_name, ip_address, status):
-    """تسجيل محاولة الدخول"""
     c.execute("""INSERT INTO access_logs 
                  (username, device_name, ip_address, status, timestamp) 
                  VALUES (?, ?, ?, ?, ?)""",
@@ -103,13 +96,11 @@ def log_access(username, device_name, ip_address, status):
     conn.commit()
 
 def get_access_stats():
-    """إحصائيات الوصول"""
     total = c.execute("SELECT COUNT(*) FROM approvals").fetchone()[0]
     pending = c.execute("SELECT COUNT(*) FROM approvals WHERE status='pending'").fetchone()[0]
     approved = c.execute("SELECT COUNT(*) FROM approvals WHERE status='approved'").fetchone()[0]
     denied = c.execute("SELECT COUNT(*) FROM approvals WHERE status='denied'").fetchone()[0]
     
-    # آخر 10 طلبات
     recent = c.execute("""SELECT username, device_name, status, timestamp 
                           FROM approvals ORDER BY timestamp DESC LIMIT 10""").fetchall()
     
@@ -125,18 +116,15 @@ def get_access_stats():
 bot = telegram.Bot(token=BOT_TOKEN)
 pending_requests = {}
 
-# الشعار المخصص
 CUSTOM_LOGO = get_setting("custom_logo", "𓆩♛✦𓆪 TOMB OF MAKROTEC 𓆩♛✦𓆪")
 WELCOME_MESSAGE = get_setting("welcome_message", "🔐 طلب فتح التطبيق")
 
 def send_approval_request(request_id, app_name="Tomb", username="Unknown", 
                           device_name="Unknown", device_info="", ip_address="Unknown"):
-    """إرسال طلب موافقة للمستخدم مع جميع المعلومات"""
     
     custom_logo = get_setting("custom_logo", CUSTOM_LOGO)
     welcome_msg = get_setting("welcome_message", WELCOME_MESSAGE)
     
-    # تنسيق الرسالة
     message_text = f"""
 {custom_logo}
 
@@ -171,14 +159,12 @@ def send_approval_request(request_id, app_name="Tomb", username="Unknown",
         )
     except Exception as e:
         print(f"Error sending message: {e}")
-        # محاولة بدون ماركداون
         bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=message_text.replace('*', '').replace('`', ''),
             reply_markup=reply_markup
         )
     
-    # تخزين الطلب
     pending_requests[request_id] = {
         "status": "pending", 
         "timestamp": time.time(),
@@ -194,7 +180,6 @@ def send_approval_request(request_id, app_name="Tomb", username="Unknown",
 
 # ===================== دوال البوت =====================
 def handle_callback(update, context):
-    """معالجة الضغط على الأزرار"""
     query = update.callback_query
     query.answer()
     
@@ -205,20 +190,17 @@ def handle_callback(update, context):
         status = "approved"
         response_text = "✅ **تمت الموافقة بنجاح**\n\nيمكن للمستخدم الآن الدخول إلى التطبيق."
         
-        # تحديث الحالة
         if request_id in pending_requests:
             pending_requests[request_id]["status"] = status
         
         c.execute("UPDATE approvals SET status = ? WHERE request_id = ?", (status, request_id))
         conn.commit()
         
-        # تسجيل في سجل الوصول
         c.execute("SELECT username, device_name, ip_address FROM approvals WHERE request_id = ?", (request_id,))
         row = c.fetchone()
         if row:
             log_access(row[0], row[1], row[2], "approved")
         
-        # إرسال إشعار للمستخدم
         bot.send_message(
             chat_id=ADMIN_CHAT_ID,
             text=f"✅ تمت الموافقة على طلب `{request_id[:8]}`",
@@ -236,7 +218,6 @@ def handle_callback(update, context):
         c.execute("UPDATE approvals SET status = ? WHERE request_id = ?", (status, request_id))
         conn.commit()
         
-        # تسجيل في سجل الوصول
         c.execute("SELECT username, device_name, ip_address FROM approvals WHERE request_id = ?", (request_id,))
         row = c.fetchone()
         if row:
@@ -276,7 +257,6 @@ def handle_callback(update, context):
     else:
         return
     
-    # تعديل الرسالة الأصلية
     try:
         query.edit_message_text(
             text=f"{response_text}\n\n{get_setting('custom_logo', CUSTOM_LOGO)}",
@@ -286,7 +266,6 @@ def handle_callback(update, context):
         pass
 
 def handle_message(update, context):
-    """معالجة الأوامر النصية من المستخدم"""
     message = update.message
     chat_id = message.chat_id
     text = message.text
@@ -463,7 +442,6 @@ def handle_message(update, context):
             bot.send_message(chat_id=chat_id, text=settings_text, parse_mode=telegram.ParseMode.MARKDOWN)
 
 def run_bot():
-    """تشغيل البوت"""
     try:
         updater = Updater(BOT_TOKEN, use_context=True)
         dp = updater.dispatcher
@@ -488,7 +466,6 @@ def run_bot():
     except Exception as e:
         print(f"Bot error: {e}")
 
-# بدء البوت في thread منفصل
 bot_thread = threading.Thread(target=run_bot)
 bot_thread.daemon = True
 bot_thread.start()
@@ -496,7 +473,6 @@ bot_thread.start()
 # ===================== API للتطبيق =====================
 @app.route('/request_access', methods=['POST'])
 def request_access():
-    """التطبيق يرسل طلب موافقة"""
     try:
         data = request.json
         request_id = data.get('request_id')
@@ -508,7 +484,6 @@ def request_access():
         if not request_id:
             return jsonify({"error": "missing request_id"}), 400
         
-        # الحصول على IP
         ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
         
         send_approval_request(
@@ -527,16 +502,13 @@ def request_access():
 
 @app.route('/check_status/<request_id>', methods=['GET'])
 def check_status(request_id):
-    """التطبيق يتحقق من حالة الطلب"""
     try:
-        # تحقق من الذاكرة أولاً
         if request_id in pending_requests:
             status = pending_requests[request_id]["status"]
             if status != "pending":
                 del pending_requests[request_id]
             return jsonify({"status": status})
         
-        # ثم من قاعدة البيانات
         c.execute("SELECT status FROM approvals WHERE request_id = ?", (request_id,))
         row = c.fetchone()
         if row:
@@ -547,6 +519,7 @@ def check_status(request_id):
     except Exception as e:
         return jsonify({"status": "pending", "error": str(e)}), 500
 
+# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/verify_password', methods=['POST'])
 def verify_password():
     """التحقق من كلمة المرور"""
@@ -554,13 +527,14 @@ def verify_password():
         data = request.json
         password = data.get('password', '')
         
-        if verify_password(password):
+        if check_password(password):  # ← استخدم check_password
             return jsonify({"valid": True})
         return jsonify({"valid": False})
     
     except Exception as e:
         return jsonify({"valid": False, "error": str(e)}), 500
 
+# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/change_password', methods=['POST'])
 def change_password():
     """تغيير كلمة المرور"""
@@ -569,7 +543,7 @@ def change_password():
         old_password = data.get('old_password', '')
         new_password = data.get('new_password', '')
         
-        if not verify_password(old_password):
+        if not check_password(old_password):  # ← استخدم check_password
             return jsonify({"success": False, "error": "كلمة المرور الحالية غير صحيحة"})
         
         if len(new_password) < 4:
@@ -583,6 +557,7 @@ def change_password():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
     """تحديث إعدادات البوت من التطبيق"""
@@ -590,7 +565,7 @@ def update_settings():
         data = request.json
         password = data.get('password', '')
         
-        if not verify_password(password):
+        if not check_password(password):  # ← استخدم check_password
             return jsonify({"success": False, "error": "كلمة المرور غير صحيحة"})
         
         if 'logo' in data:
@@ -605,7 +580,6 @@ def update_settings():
 
 @app.route('/get_settings', methods=['GET'])
 def get_settings():
-    """جلب إعدادات البوت"""
     try:
         return jsonify({
             "logo": get_setting("custom_logo", CUSTOM_LOGO),
@@ -616,7 +590,6 @@ def get_settings():
 
 @app.route('/get_stats', methods=['GET'])
 def get_stats():
-    """جلب إحصائيات النظام"""
     try:
         stats = get_access_stats()
         return jsonify(stats)
@@ -625,7 +598,6 @@ def get_stats():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """فحص صحة النظام"""
     return jsonify({
         "status": "ok",
         "bot": "running",
