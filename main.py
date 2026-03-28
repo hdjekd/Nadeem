@@ -74,7 +74,6 @@ def get_app_password():
     conn.commit()
     return default_hash
 
-# ✅ تم تغيير اسم الدالة من verify_password إلى check_password لتجنب التضارب
 def check_password(password):
     """التحقق من كلمة المرور"""
     current_hash = get_app_password()
@@ -497,18 +496,17 @@ def request_access():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ✅ تم تحديث الدالة لتعمل من قاعدة البيانات مباشرة لحل مشكلة التعليق
 @app.route('/check_status/<request_id>', methods=['GET'])
 def check_status(request_id):
     try:
-        # البحث مباشرة في قاعدة البيانات لضمان عدم تأثر الحالة بإعادة تشغيل السيرفر
+        # البحث مباشرة في قاعدة البيانات
         c.execute("SELECT status FROM approvals WHERE request_id = ?", (request_id,))
         row = c.fetchone()
         
         if row:
             return jsonify({"status": row[0]})
         
-        # إذا لم يوجد في القاعدة، نتحقق من الذاكرة كخيار احتياطي
+        # إذا لم يوجد في القاعدة، نتحقق من الذاكرة
         if request_id in pending_requests:
             return jsonify({"status": pending_requests[request_id]["status"]})
         
@@ -517,7 +515,7 @@ def check_status(request_id):
     except Exception as e:
         return jsonify({"status": "pending", "error": str(e)}), 500
 
-# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
+# ✅ تم إصلاح: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/verify_password', methods=['POST'])
 def verify_password():
     """التحقق من كلمة المرور"""
@@ -525,14 +523,14 @@ def verify_password():
         data = request.json
         password = data.get('password', '')
         
-        if check_password(password):  # ← استخدم check_password
+        if check_password(password):  # استخدام check_password الصحيحة
             return jsonify({"valid": True})
         return jsonify({"valid": False})
     
     except Exception as e:
         return jsonify({"valid": False, "error": str(e)}), 500
 
-# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
+# ✅ تم إصلاح: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/change_password', methods=['POST'])
 def change_password():
     """تغيير كلمة المرور"""
@@ -541,7 +539,7 @@ def change_password():
         old_password = data.get('old_password', '')
         new_password = data.get('new_password', '')
         
-        if not check_password(old_password):  # ← استخدم check_password
+        if not check_password(old_password):  # استخدام check_password الصحيحة
             return jsonify({"success": False, "error": "كلمة المرور الحالية غير صحيحة"})
         
         if len(new_password) < 4:
@@ -555,7 +553,7 @@ def change_password():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
+# ✅ تم إصلاح: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
     """تحديث إعدادات البوت من التطبيق"""
@@ -563,7 +561,7 @@ def update_settings():
         data = request.json
         password = data.get('password', '')
         
-        if not check_password(password):  # ← استخدم check_password
+        if not check_password(password):  # استخدام check_password الصحيحة
             return jsonify({"success": False, "error": "كلمة المرور غير صحيحة"})
         
         if 'logo' in data:
