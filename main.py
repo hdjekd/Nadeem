@@ -704,11 +704,10 @@ def handle_callback(update, context):
             pass
         send_main_menu(chat_id)
     
-    # ========== معالجة الطلبات ==========
+    # ========== معالجة الطلبات (تم إصلاحها) ==========
     elif data.startswith("approve_"):
         request_id = data[8:]
         status = "approved"
-        response_text = "✅ **تمت الموافقة بنجاح**\n\nيمكن للمستخدم الآن الدخول إلى التطبيق."
         
         if request_id in pending_requests:
             pending_requests[request_id]["status"] = status
@@ -721,9 +720,17 @@ def handle_callback(update, context):
         if row:
             log_access(row[0], row[1], row[2], "approved")
         
+        # ✅ إرسال رسالة منفصلة للتأكيد (مثل الكود القديم)
+        bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=f"✅ تمت الموافقة على طلب `{request_id[:8]}`",
+            parse_mode=telegram.ParseMode.MARKDOWN
+        )
+        
+        # تعديل الرسالة الأصلية لإظهار النتيجة
         try:
             query.edit_message_text(
-                text=f"{response_text}\n\n{get_setting('custom_logo', CUSTOM_LOGO)}",
+                text=f"✅ **تمت الموافقة بنجاح**\n\nيمكن للمستخدم الآن الدخول إلى التطبيق.\n\n{get_setting('custom_logo', CUSTOM_LOGO)}",
                 parse_mode=telegram.ParseMode.MARKDOWN
             )
         except:
@@ -732,7 +739,6 @@ def handle_callback(update, context):
     elif data.startswith("deny_"):
         request_id = data[5:]
         status = "denied"
-        response_text = "❌ **تم رفض الطلب**\n\nلم يتم السماح للمستخدم بالدخول."
         
         if request_id in pending_requests:
             pending_requests[request_id]["status"] = status
@@ -745,9 +751,17 @@ def handle_callback(update, context):
         if row:
             log_access(row[0], row[1], row[2], "denied")
         
+        # ✅ إرسال رسالة منفصلة للتأكيد (مثل الكود القديم)
+        bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=f"❌ تم رفض طلب `{request_id[:8]}`",
+            parse_mode=telegram.ParseMode.MARKDOWN
+        )
+        
+        # تعديل الرسالة الأصلية لإظهار النتيجة
         try:
             query.edit_message_text(
-                text=f"{response_text}\n\n{get_setting('custom_logo', CUSTOM_LOGO)}",
+                text=f"❌ **تم رفض الطلب**\n\nلم يتم السماح للمستخدم بالدخول.\n\n{get_setting('custom_logo', CUSTOM_LOGO)}",
                 parse_mode=telegram.ParseMode.MARKDOWN
             )
         except:
@@ -1208,7 +1222,7 @@ def health():
     return jsonify({
         "status": "ok",
         "bot": "running",
-        "version": "5.0",
+        "version": "5.1",
         "timestamp": int(time.time())
     })
 
