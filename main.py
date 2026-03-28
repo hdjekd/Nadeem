@@ -19,62 +19,80 @@ app = Flask(__name__)
 CORS(app)
 
 # ===================== قاعدة البيانات =====================
-conn = sqlite3.connect('tomb_bot.db', check_same_thread=False)
-c = conn.cursor()
+# دالة لفتح الاتصال في كل مرة لضمان عدم حدوث تعليق (Database Lock)
+def get_db_connection():
+    conn = sqlite3.connect('tomb_bot.db', check_same_thread=False)
+    return conn
 
-c.execute('''CREATE TABLE IF NOT EXISTS approvals
-             (request_id TEXT PRIMARY KEY, 
-              status TEXT, 
-              timestamp INTEGER,
-              username TEXT,
-              device_name TEXT,
-              device_info TEXT,
-              ip_address TEXT)''')
+# تهيئة الجداول عند التشغيل
+def init_db():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS approvals
+                 (request_id TEXT PRIMARY KEY, 
+                  status TEXT, 
+                  timestamp INTEGER,
+                  username TEXT,
+                  device_name TEXT,
+                  device_info TEXT,
+                  ip_address TEXT)''')
 
-c.execute('''CREATE TABLE IF NOT EXISTS settings
-             (key TEXT PRIMARY KEY, 
-              value TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS settings
+                 (key TEXT PRIMARY KEY, 
+                  value TEXT)''')
 
-c.execute('''CREATE TABLE IF NOT EXISTS passwords
-             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-              password_hash TEXT,
-              updated_at INTEGER,
-              updated_by TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS passwords
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  password_hash TEXT,
+                  updated_at INTEGER,
+                  updated_by TEXT)''')
 
-c.execute('''CREATE TABLE IF NOT EXISTS access_logs
-             (id INTEGER PRIMARY KEY AUTOINCREMENT,
-              username TEXT,
-              device_name TEXT,
-              ip_address TEXT,
-              status TEXT,
-              timestamp INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS access_logs
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  username TEXT,
+                  device_name TEXT,
+                  ip_address TEXT,
+                  status TEXT,
+                  timestamp INTEGER)''')
+    conn.commit()
+    conn.close()
 
-conn.commit()
+init_db()
 
 # ===================== دوال الإعدادات =====================
 def get_setting(key, default=""):
+    conn = get_db_connection()
+    c = conn.cursor()
     c.execute("SELECT value FROM settings WHERE key = ?", (key,))
     row = c.fetchone()
+    conn.close()
     if row:
         return row[0]
     return default
 
 def set_setting(key, value):
+    conn = get_db_connection()
+    c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, value))
     conn.commit()
+    conn.close()
 
 def get_app_password():
+    conn = get_db_connection()
+    c = conn.cursor()
     c.execute("SELECT password_hash FROM passwords ORDER BY updated_at DESC LIMIT 1")
     row = c.fetchone()
     if row:
-        return row[0]
+        res = row[0]
+        conn.close()
+        return res
     default_hash = hashlib.sha256("123456".encode()).hexdigest()
     c.execute("INSERT INTO passwords (password_hash, updated_at, updated_by) VALUES (?, ?, ?)", 
               (default_hash, int(time.time()), "system"))
     conn.commit()
+    conn.close()
     return default_hash
 
-# ✅ تم تغيير اسم الدالة من verify_password إلى check_password لتجنب التضارب
 def check_password(password):
     """التحقق من كلمة المرور"""
     current_hash = get_app_password()
@@ -83,19 +101,27 @@ def check_password(password):
 
 def update_password(new_password, updated_by="bot"):
     new_hash = hashlib.sha256(new_password.encode()).hexdigest()
+    conn = get_db_connection()
+    c = conn.cursor()
     c.execute("INSERT INTO passwords (password_hash, updated_at, updated_by) VALUES (?, ?, ?)", 
               (new_hash, int(time.time()), updated_by))
     conn.commit()
+    conn.close()
     return True
 
 def log_access(username, device_name, ip_address, status):
+    conn = get_db_connection()
+    c = conn.cursor()
     c.execute("""INSERT INTO access_logs 
                  (username, device_name, ip_address, status, timestamp) 
                  VALUES (?, ?, ?, ?, ?)""",
               (username, device_name, ip_address, status, int(time.time())))
     conn.commit()
+    conn.close()
 
 def get_access_stats():
+    conn = get_db_connection()
+    c = conn.cursor()
     total = c.execute("SELECT COUNT(*) FROM approvals").fetchone()[0]
     pending = c.execute("SELECT COUNT(*) FROM approvals WHERE status='pending'").fetchone()[0]
     approved = c.execute("SELECT COUNT(*) FROM approvals WHERE status='approved'").fetchone()[0]
@@ -103,7 +129,7 @@ def get_access_stats():
     
     recent = c.execute("""SELECT username, device_name, status, timestamp 
                           FROM approvals ORDER BY timestamp DESC LIMIT 10""").fetchall()
-    
+    conn.close()
     return {
         "total": total,
         "pending": pending,
@@ -172,11 +198,14 @@ def send_approval_request(request_id, app_name="Tomb", username="Unknown",
         "device_name": device_name
     }
     
+    conn = get_db_connection()
+    c = conn.cursor()
     c.execute("""INSERT OR REPLACE INTO approvals 
                  (request_id, status, timestamp, username, device_name, device_info, ip_address) 
                  VALUES (?, ?, ?, ?, ?, ?, ?)""",
               (request_id, "pending", int(time.time()), username, device_name, device_info, ip_address))
     conn.commit()
+    conn.close()
 
 # ===================== دوال البوت =====================
 def handle_callback(update, context):
@@ -184,6 +213,8 @@ def handle_callback(update, context):
     query.answer()
     
     data = query.data
+    conn = get_db_connection()
+    c = conn.cursor()
     
     if data.startswith("approve_"):
         request_id = data[8:]
@@ -252,11 +283,10 @@ def handle_callback(update, context):
             )
         else:
             bot.send_message(chat_id=ADMIN_CHAT_ID, text="❌ لم يتم العثور على الطلب")
+        conn.close()
         return
     
-    else:
-        return
-    
+    conn.close()
     try:
         query.edit_message_text(
             text=f"{response_text}\n\n{get_setting('custom_logo', CUSTOM_LOGO)}",
@@ -328,9 +358,12 @@ def handle_message(update, context):
                 bot.send_message(chat_id=chat_id, text="📭 لا توجد طلبات بعد")
         
         elif text == '/pending':
+            conn = get_db_connection()
+            c = conn.cursor()
             pending_reqs = c.execute(
                 "SELECT request_id, username, device_name, timestamp FROM approvals WHERE status='pending' ORDER BY timestamp DESC"
             ).fetchall()
+            conn.close()
             
             if pending_reqs:
                 text_msg = "⏳ *الطلبات المعلقة:*\n\n"
@@ -342,9 +375,12 @@ def handle_message(update, context):
                 bot.send_message(chat_id=chat_id, text="✅ لا توجد طلبات معلقة")
         
         elif text == '/approved':
+            conn = get_db_connection()
+            c = conn.cursor()
             approved_reqs = c.execute(
                 "SELECT request_id, username, device_name, timestamp FROM approvals WHERE status='approved' ORDER BY timestamp DESC LIMIT 20"
             ).fetchall()
+            conn.close()
             
             if approved_reqs:
                 text_msg = "✅ *الطلبات المقبولة:*\n\n"
@@ -356,9 +392,12 @@ def handle_message(update, context):
                 bot.send_message(chat_id=chat_id, text="📭 لا توجد طلبات مقبولة")
         
         elif text == '/denied':
+            conn = get_db_connection()
+            c = conn.cursor()
             denied_reqs = c.execute(
                 "SELECT request_id, username, device_name, timestamp FROM approvals WHERE status='denied' ORDER BY timestamp DESC LIMIT 20"
             ).fetchall()
+            conn.close()
             
             if denied_reqs:
                 text_msg = "❌ *الطلبات المرفوضة:*\n\n"
@@ -370,9 +409,12 @@ def handle_message(update, context):
                 bot.send_message(chat_id=chat_id, text="📭 لا توجد طلبات مرفوضة")
         
         elif text == '/logs':
+            conn = get_db_connection()
+            c = conn.cursor()
             logs = c.execute(
                 "SELECT username, device_name, status, timestamp FROM access_logs ORDER BY timestamp DESC LIMIT 20"
             ).fetchall()
+            conn.close()
             
             if logs:
                 log_text = "📋 *سجل الدخول الأخير:*\n\n"
@@ -385,9 +427,12 @@ def handle_message(update, context):
                 bot.send_message(chat_id=chat_id, text="📭 لا يوجد سجل")
         
         elif text == '/clear':
+            conn = get_db_connection()
+            c = conn.cursor()
             c.execute("DELETE FROM approvals WHERE status != 'pending'")
             c.execute("DELETE FROM access_logs")
             conn.commit()
+            conn.close()
             bot.send_message(chat_id=chat_id, text="🗑️ تم مسح جميع الطلبات المنتهية وسجل الدخول")
         
         elif text.startswith('/setpass'):
@@ -497,18 +542,18 @@ def request_access():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ✅ تم تحديث الدالة لتعمل من قاعدة البيانات مباشرة لحل مشكلة التعليق
 @app.route('/check_status/<request_id>', methods=['GET'])
 def check_status(request_id):
     try:
-        # البحث مباشرة في قاعدة البيانات لضمان عدم تأثر الحالة بإعادة تشغيل السيرفر
+        conn = get_db_connection()
+        c = conn.cursor()
         c.execute("SELECT status FROM approvals WHERE request_id = ?", (request_id,))
         row = c.fetchone()
+        conn.close()
         
         if row:
             return jsonify({"status": row[0]})
         
-        # إذا لم يوجد في القاعدة، نتحقق من الذاكرة كخيار احتياطي
         if request_id in pending_requests:
             return jsonify({"status": pending_requests[request_id]["status"]})
         
@@ -517,7 +562,6 @@ def check_status(request_id):
     except Exception as e:
         return jsonify({"status": "pending", "error": str(e)}), 500
 
-# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/verify_password', methods=['POST'])
 def verify_password():
     """التحقق من كلمة المرور"""
@@ -525,14 +569,13 @@ def verify_password():
         data = request.json
         password = data.get('password', '')
         
-        if check_password(password):  # ← استخدم check_password
+        if check_password(password):
             return jsonify({"valid": True})
         return jsonify({"valid": False})
     
     except Exception as e:
         return jsonify({"valid": False, "error": str(e)}), 500
 
-# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/change_password', methods=['POST'])
 def change_password():
     """تغيير كلمة المرور"""
@@ -541,7 +584,7 @@ def change_password():
         old_password = data.get('old_password', '')
         new_password = data.get('new_password', '')
         
-        if not check_password(old_password):  # ← استخدم check_password
+        if not check_password(old_password):
             return jsonify({"success": False, "error": "كلمة المرور الحالية غير صحيحة"})
         
         if len(new_password) < 4:
@@ -555,7 +598,6 @@ def change_password():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-# ✅ تم إصلاح الدالة: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
     """تحديث إعدادات البوت من التطبيق"""
@@ -563,7 +605,7 @@ def update_settings():
         data = request.json
         password = data.get('password', '')
         
-        if not check_password(password):  # ← استخدم check_password
+        if not check_password(password):
             return jsonify({"success": False, "error": "كلمة المرور غير صحيحة"})
         
         if 'logo' in data:
