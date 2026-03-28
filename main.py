@@ -6,7 +6,7 @@ import hashlib
 import threading
 import requests
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -467,6 +467,25 @@ bot_thread.daemon = True
 bot_thread.start()
 
 # ===================== API للتطبيق =====================
+@app.route('/', methods=['GET'])
+def home():
+    """الصفحة الرئيسية"""
+    return jsonify({
+        "status": "online",
+        "service": "Tomb Bot Protection System",
+        "version": "3.0",
+        "endpoints": [
+            "/request_access - POST",
+            "/check_status/<request_id> - GET", 
+            "/verify_password - POST",
+            "/change_password - POST",
+            "/update_settings - POST",
+            "/get_settings - GET",
+            "/get_stats - GET",
+            "/health - GET"
+        ]
+    })
+
 @app.route('/request_access', methods=['POST'])
 def request_access():
     try:
@@ -498,24 +517,33 @@ def request_access():
 
 @app.route('/check_status/<request_id>', methods=['GET'])
 def check_status(request_id):
+    """التحقق من حالة الطلب - مهم جداً للتطبيق"""
     try:
-        # البحث مباشرة في قاعدة البيانات
+        print(f"Checking status for request_id: {request_id}")  # للتصحيح
+        
+        # البحث في قاعدة البيانات
         c.execute("SELECT status FROM approvals WHERE request_id = ?", (request_id,))
         row = c.fetchone()
         
         if row:
-            return jsonify({"status": row[0]})
+            status = row[0]
+            print(f"Found in database: {status}")  # للتصحيح
+            return jsonify({"status": status})
         
-        # إذا لم يوجد في القاعدة، نتحقق من الذاكرة
+        # البحث في الذاكرة المؤقتة
         if request_id in pending_requests:
-            return jsonify({"status": pending_requests[request_id]["status"]})
+            status = pending_requests[request_id]["status"]
+            print(f"Found in memory: {status}")  # للتصحيح
+            return jsonify({"status": status})
         
+        # إذا لم يتم العثور على الطلب
+        print(f"Request not found: {request_id}")  # للتصحيح
         return jsonify({"status": "pending"})
     
     except Exception as e:
+        print(f"Error in check_status: {e}")  # للتصحيح
         return jsonify({"status": "pending", "error": str(e)}), 500
 
-# ✅ تم إصلاح: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/verify_password', methods=['POST'])
 def verify_password():
     """التحقق من كلمة المرور"""
@@ -523,14 +551,13 @@ def verify_password():
         data = request.json
         password = data.get('password', '')
         
-        if check_password(password):  # استخدام check_password الصحيحة
+        if check_password(password):
             return jsonify({"valid": True})
         return jsonify({"valid": False})
     
     except Exception as e:
         return jsonify({"valid": False, "error": str(e)}), 500
 
-# ✅ تم إصلاح: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/change_password', methods=['POST'])
 def change_password():
     """تغيير كلمة المرور"""
@@ -539,7 +566,7 @@ def change_password():
         old_password = data.get('old_password', '')
         new_password = data.get('new_password', '')
         
-        if not check_password(old_password):  # استخدام check_password الصحيحة
+        if not check_password(old_password):
             return jsonify({"success": False, "error": "كلمة المرور الحالية غير صحيحة"})
         
         if len(new_password) < 4:
@@ -553,7 +580,6 @@ def change_password():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-# ✅ تم إصلاح: الآن تستخدم check_password بدلاً من verify_password
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
     """تحديث إعدادات البوت من التطبيق"""
@@ -561,7 +587,7 @@ def update_settings():
         data = request.json
         password = data.get('password', '')
         
-        if not check_password(password):  # استخدام check_password الصحيحة
+        if not check_password(password):
             return jsonify({"success": False, "error": "كلمة المرور غير صحيحة"})
         
         if 'logo' in data:
